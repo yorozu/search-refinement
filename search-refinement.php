@@ -1,14 +1,14 @@
 <?php
 /*
 Plugin Name: Search Refinement
-Version: 0.8.9.3
+Version: 0.8.9.4
 Plugin URI: 
 Description: カスタムフィールドの値で投稿を絞り込むためのプラグイン
 Author: KATO Yoshitaka
 Author URI: http://www.djcom.jp/
 */
 
-define('SEAREF_VERSION', '0.8.9.3');
+define('SEAREF_VERSION', '0.8.9.4');
 define('SEAREF_DIR_URI', plugin_dir_url(__FILE__));
 define('SEAREF_DIR_PATH', plugin_dir_path(__FILE__));
 define('SEAREF_TEXTDOMAIN', 'search-refinement');
@@ -28,7 +28,7 @@ class SearchRefinement extends Form_Tags {
 	var $query_var; //絞り込み用
 	var $separater; //URL内で使用するセパレータ
 	var $action_url; //絞り込み検索Form用
-	var $post__in; 		//(array)記事IDでの絞込み用
+	var $post__in;	//(array)記事IDでの絞込み用
 	var $post__not_in;  //(array)記事一覧で除外する記事
 	var $searef_request = array(); //絞込みリクエスト内容を格納
 	var $posts_where; //フィルター後の posts_where
@@ -37,15 +37,13 @@ class SearchRefinement extends Form_Tags {
 	var $selected_category;
 	var $args; //search_refinement()の引数格納用。デバッグ的
 	var $sub_query_metavalue; //絞り込みに直接利用するwhere分格納用
-	var $title_mapping; //metakeyをlabelに置き換えるためのリスト
-	var $html_inputhidden;
+	var $title_mapping = array(); //metakeyをlabelに置き換えるためのリスト
+	var $inputhiddens = array();
 
 	function __construct() {
-		$this->init();
-		add_action('widgets_init', create_function('', 'return register_widget("SEAREF_Widget");'));
-		
+		$this->init();		
 		if ( !is_admin() ){
-			add_action('wp',			array(&$this, 'set_title_mapping'), 10);
+			add_action('init',			array(&$this, 'set_title_mapping'), 9);
 			add_action('parse_request', array(&$this, 'add_query_var'), 9);
 			add_action('parse_request', array(&$this, 'searef_parse_request'), 11);
 			add_action('pre_get_posts', array(&$this, 'custom_sort'), 12);
@@ -65,8 +63,14 @@ class SearchRefinement extends Form_Tags {
 		$this->args = $this->set_options();
 		$this->set_separater();
 	}
-	function set_title_mapping(){
-		$this->title_mapping = apply_filters('searef_title_mapping', array());
+	function set_title_mapping($titles=''){
+		if ( is_array($titles) && count($titles) >= 1 ){
+			foreach ( $titles as $orig => $title ){
+				$this->title_mapping[esc_attr($orig)] = esc_attr($title);
+			}
+		} else {
+			$this->title_mapping = apply_filters('searef_title_mapping', $this->title_mapping);
+		}
 	}
 	function set_separater(){
 		$this->separater = urlencode("\t");
@@ -78,7 +82,7 @@ class SearchRefinement extends Form_Tags {
 		global $cat;
 		
 		$defaults = array(
-			'title' => '絞り込み検索', 
+			'title' => __('Search Refinement'), 
 			'exclude_terms' => '',
 			'catid' => $cat,
 			'meta_key' => '',
@@ -108,10 +112,13 @@ class SearchRefinement extends Form_Tags {
 						$metakey   = $s[0];
 						$metasign  = 'eq';
 						$metavalue = $s[1];
-					} elseif ( count($s) == 3 ){
+					} elseif ( count($s) >= 3 ){
 						$metakey   = $s[0];
 						$metasign  = $s[1];
 						$metavalue = $s[2];
+						if ( isset($s[3]) && !empty($s[3]) && !is_array($s[3]) ) {
+							$this->set_title_mapping( array( $metavalue => $this->__($metavalue).$s[3] ) );
+						}
 					} else {
 						continue;
 					}
@@ -153,13 +160,15 @@ class SearchRefinement extends Form_Tags {
 				$this->action_url = get_bloginfo('url') . $uri[0];
 			}
 		} else {
-			$this->action_url = $_SERVER['REQUEST_URI'];
+			$this->action_url = get_bloginfo('url') . $_SERVER['REQUEST_URI'];
 		}
 	}
 	function get_action_url($args=''){
 		$r = wp_parse_args($args);
 		if ( isset($r['cat']) ){
 			return get_category_link((int)$r['cat']);
+		} else if (  isset($r['cat']) ){
+			return get_category_link((int)$r['default_cat']);
 		}
 		return $this->action_url;
 	}
@@ -178,7 +187,7 @@ class SearchRefinement extends Form_Tags {
 			$is_category = true;
 		} else {
 			foreach ( (array)$cats as $catid ) {
-				if ( !ctype_digit($catid) && is_category($catid) ){
+				if ( !is_numeric($catid) && is_category($catid) ){
 					$cat_obj = get_category_by_slug($catid);
 					$catid   = $cat_obj->term_id;
 					$descendants = get_term_children( (int)$catid, 'category' );
@@ -326,7 +335,7 @@ class SearchRefinement extends Form_Tags {
 		$output['order'] = (isset($order)) ? $order : '';
 		
 		//
-		$output['searef_count'] = ( empty($this->searef_request) ) ? 0 : count($this->searef_request);
+		$output['count'] = ( empty($this->searef_request) ) ? 0 : count($this->searef_request);
 		$output['post_in']    = join( ',', array_diff((array)$this->post__in, (array)$this->post__not_in) );
 		
 		if ( empty($key) ){
@@ -341,24 +350,23 @@ class SearchRefinement extends Form_Tags {
 		$defaults = array(
 			'echo' => 1,
 			'found_posts' => $wp_query->found_posts,
-			'msg_wrap_before' => '<div class="message">',
+			'msg_wrap_before' => '<div class="message %s">',
 			'msg_wrap_after' => '</div>',
 		);
 		$r = wp_parse_args( $args, $defaults );
 		extract($r, EXTR_SKIP);
 		
-		if ( is_category() ){
-			if (ctype_digit($found_posts) && $found_posts > 0) {
-				$msg[] = $msg_wrap_before;
+		if ( count( $this->searef_request ) || is_archive() ){
+			if (is_numeric($found_posts) && $found_posts > 0) {
+				$msg[] = sprintf($msg_wrap_before, ' ');
 				$msg[] = sprintf( __('%s items found', SEAREF_TEXTDOMAIN), '<span class="count">' . (int)$found_posts . '</span>' );
 				$msg[] = $msg_wrap_after;
 			} else {
-				$msg[] = '<div class="message notfound">';
+				$msg[] = sprintf($msg_wrap_before, 'notfound');
 				$msg[] = __('No items found.');
 				$msg[] = $msg_wrap_after;
 			}
 		}
-
 		if ( $echo && isset($msg) ){
 			echo join('',(array)$msg);
 		}
@@ -432,7 +440,7 @@ class SearchRefinement extends Form_Tags {
 		}
 		
 		$inner = array(" INNER JOIN {$wpdb->postmeta} ON ({$wpdb->postmeta}.post_id = {$wpdb->posts}.ID)");
-		if ( !is_archive() && $default_cat ){ 
+		if ( ( (is_home() && $is_home) || !is_archive() ) && $default_cat ){ 
 			$inner[] = "INNER JOIN {$wpdb->term_relationships} AS tr ON (tr.object_id = {$wpdb->posts}.ID)";
 			$inner[] = "INNER JOIN {$wpdb->term_taxonomy} AS tt ON (tt.term_taxonomy_id = tr.term_taxonomy_id)";
 			$inner[] = "INNER JOIN {$wpdb->terms} AS t ON (t.term_id = tt.term_id)";
@@ -443,7 +451,7 @@ class SearchRefinement extends Form_Tags {
 				switch ($key){
 					case 'cat':
 						$value = (int)$value;
-						$where[] = "AND tt.taxonomy = 'category' AND tt.term_id = '{$value}'";
+						$where[] = "AND tt.taxonomy = 'category' AND (tt.term_id = '{$value}' OR tt.parent = '{$value}') ";
 						break;
 					case 'taxonomy':
 						$where[] = "AND tt.taxonomy = '{$value}'";
@@ -507,6 +515,7 @@ class SearchRefinement extends Form_Tags {
 		return $this->inputhiddens;
 	}
 	function html_inputhiddens($args=''){
+		$html = array();
 		$sets = $this->get_inputhidden();
 		$r  = wp_parse_args( $sets, $args );
 		foreach ( $r as $name => $value ){
@@ -536,11 +545,10 @@ class SearchRefinement extends Form_Tags {
 function searef_searchbox($args=''){
 	global $searchrefinement;
 	global $wpdb;
-	
 	$defaults = array(
 		'title' => '',
 		
-		'default_cat' => '',
+		'default_cat' => array(),
 		'echo_message' => true,
 		'wrap_tag_before' => '<ul>',
 		'wrap_tag_after' => '</ul>',
@@ -550,20 +558,31 @@ function searef_searchbox($args=''){
 		'label_after' => ':</label>',
 		'select_tag_before' => '<span class="selection">',
 		'select_tag_after' => '</span>',
+		'is_home' => false,
 		'display_reset_button' => true,
 	);
 	// and, Depend $this->args
-	
-	$_r = wp_parse_args( $args, $defaults );
-	$r  = wp_parse_args( $_r, $searchrefinement->get_stats() );
+	$defaults = wp_parse_args( $searchrefinement->get_stats(), $defaults );
+	$r = wp_parse_args( $args, $defaults );	
 	extract($r, EXTR_SKIP);
-	
-	if ( !empty($default_cat) && !is_array($default_cat) ){
-		$default_cat = array('cat'=>$default_cat);
+
+	if ( !is_array($default_cat) ){
+		if ( is_numeric($default_cat) ){
+			$default_cat = array('cat' => (int)$default_cat);
+		} else {
+			$taxonomies = wp_parse_args($default_cat);
+			foreach ( $taxonomies as $k => $v ){
+				if ( $v ){
+					$_dc[esc_attr($k)] = esc_attr($v);
+				}
+			}
+			$default_cat = (isset($_dc)) ? $_dc : '';
+		}
 	}
-	$html_inputhiddens = $searchrefinement->html_inputhiddens($default_cat);
-	if ( empty($html_inputhiddens) ){
-		return;
+	if ( (is_singular() || (is_home() && $is_home)) ) {
+		$html_inputhiddens = $searchrefinement->html_inputhiddens($default_cat);
+	} else {
+		$html_inputhiddens = $searchrefinement->html_inputhiddens();
 	}
 	$onchange = (isset($onchange) && ($onchange == 'false' || $onchange == false) ) ? false : true;
 	?>
@@ -577,7 +596,7 @@ function searef_searchbox($args=''){
         <div class="search-refinement-selecter">
         	<img src="/wp-admin/images/loading.gif" title="now Searching..." alt="now Searching..." class="nowsearching" style="display:none; float:left;" />
 			<?php if ( $echo_message ) { $searchrefinement->the_message(); } ?>
-            <form name="choice" action="<?php echo $searchrefinement->get_action_url($default_cat); ?>" method="GET">
+            <form name="choice" action="<?php echo (is_home() && !$is_home) ? get_bloginfo('url') : $searchrefinement->get_action_url($default_cat); ?>" method="GET">
 				<?php echo $html_inputhiddens; ?>
 				<?php echo $wrap_tag_before; ?>
 					<?php //検索用フォームを出力
@@ -604,7 +623,7 @@ function searef_searchbox($args=''){
 								$meta_values = array('eq'=>'');
 							}
 						}
-						ksort($meta_values); //gt~lt
+						ksort($meta_values); //gt~lt (temporary...)
 						?>
 						
 						<?php 
@@ -624,21 +643,32 @@ function searef_searchbox($args=''){
 										'meta_key' => $meta_id,
 										'meta_sign' => $meta_sign,
 										'target_value' => $meta_value,
-										'default_cat' => $default_cat
+										'default_cat' => $default_cat,
+										'is_home' => $is_home,
 									);
 									foreach ( (array)$searchrefinement->get_selection($sel_args) as $value ) :
 										if ( empty($value) ) { continue; }
-										$separater = (isset($meta_sign)) ? $sep . $meta_sign . $sep : $sep;
-										$_text = $searchrefinement->unserialize( $searchrefinement->__($value) );
+										if ( isset($meta_sign) ){
+											$option_value = $meta_id . $sep . $meta_sign . $sep . $value;
+										} else {
+											$option_value = $meta_id . $sep . $value;
+										}
+										$option_name = $searchrefinement->__( $searchrefinement->unserialize($value) );
+										if ( $suffix ){
+											$option_value = $option_value . $sep . $suffix;
+											if ( !preg_match('/'.$suffix.'$/', $option_name) ) { //temporary...
+												$option_name = $option_name . $suffix;
+											}
+										}
 										if ( $value == $meta_value ){
 											$selected = true;
-											$link_param[] = 'searef[]=' . $meta_id . $separater . $value;
+											$link_param[] = 'searef[]=' . $option_value;
 										} else {
 											$selected = false;
 										}
 										echo Form_tags::selectoption(
-												$meta_id . $separater . $value,
-												$_text . $suffix,
+												$option_value,
+												$option_name,
 												$selected
 										);
 									endforeach; //$selection[$meta_id] ?>
@@ -654,7 +684,7 @@ function searef_searchbox($args=''){
 				<?php echo $wrap_tag_after; ?>
 
 				<?php if ( $onchange ) : ?><noscript><?php endif; ?>
-				<div id="submit"><input type="submit" value=" <?php _e('検索'); ?> " onclick="on_submit_search(this.form);return false;" /></div>
+				<div id="submit"><input type="submit" value=" <?php _e('Search'); ?> " onclick="on_submit_search(this.form);return false;" /></div>
 				<?php if ( $onchange ) : ?></noscript><?php endif; ?>
             </form>
 			

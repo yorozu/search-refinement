@@ -3,33 +3,29 @@
  * search-refinement/search-refinement-widget.php
  */
 
-class SEAREF_Widget_js{
-	function __construct(){
-		add_action('admin_enqueue_scripts', array(&$this, 'set_jquery_sortable') );
-	}
-	function set_jquery_sortable(){
-		wp_enqueue_script('jquery-ui-sortable', '', array('jquery'), '', true);
-		wp_enqueue_script('searef_widget', SEAREF_DIR_URI.basename(dirname(__FILE__)).'/widget.js', array('jquery-ui-sortable'), SEAREF_VERSION, true);
-	}
-}
-new SEAREF_Widget_js();
+add_action('widgets_init', create_function('', 'return register_widget("SEAREF_Widget");'));
 
 class SEAREF_Widget extends WP_Widget {
 	public $name;
 	
 	function __construct() {
+		add_action('admin_enqueue_scripts', array(&$this, 'set_jquery_sortable') );
 		parent::WP_Widget(false, $this->name = __('Search Refinement', SEAREF_TEXTDOMAIN) );
+	}
+	
+	function set_jquery_sortable(){
+		wp_enqueue_script('jquery-ui-sortable', '', array('jquery'), '', true);
+		wp_enqueue_script('searef_widget', SEAREF_DIR_URI.basename(dirname(__FILE__)).'/widget.js', array('jquery-ui-sortable'), SEAREF_VERSION, true);
 	}
 	
 	function widget($args, $instance) {
 		global $searef_admin;
 		$defaults = array(
 			'default_cat' => '',
+			'is_home' => '',
 		);
 		$r = wp_parse_args( $instance, $defaults );
-		extract($r, EXTR_SKIP);
-		
-		$widget_class = esc_attr($widget_class);
+		$widget_class = esc_attr($r['widget_class']);
 		
 		if ( isset($r['term_key']) && is_array($r['term_key']) ){
 			foreach ( $r['term_key'] as $k => $v ){
@@ -41,18 +37,22 @@ class SEAREF_Widget extends WP_Widget {
 				}
 			}
 			
+			if ( is_numeric($r['default_cat']) && $r['default_cat'] > 0 ){
+				$default_cat = array('cat' => (int)$r['default_cat']);
+			} else {
+				$taxonomies = wp_parse_args($r['default_cat']);
+				foreach ( $taxonomies as $k => $v ){
+					if ( $v ){
+						$default_cat[esc_attr($k)] = esc_attr($v);
+					}
+				}
+			}
 			$search_args = array(
-				'default_cat' => '',
+				'default_cat' => (isset($default_cat)) ? $default_cat : '',
+				'is_home' => ($r['is_home']=='on') ? true : false,
 				'title' => apply_filters( 'widget_title', ($r['title']) ? $r['title'] : '' ),
 				'terms' => $terms,
 			);
-			if ( (is_singular() || (is_home() && $r['is_home'] == 'on')) && $r['default_cat'] ) {
-				if ( ctype_digit($r['default_cat']) && $r['default_cat'] > 0 ){
-					$search_args['default_cat'] = array('cat' => (int)$r['default_cat']);
-				} elseif ( ($taxonomy = preg_split('/=/', $r['default_cat'])) >= 2 ){
-					$search_args['default_cat'] = array('taxonomy'=>$taxonomy[0], 'term'=>$taxonomy[1] );
-				}
-			}
 			?>
 			<li class="searef_widget <?php echo $widget_class; ?>">
 				<?php searef_searchbox( $search_args ); ?>
@@ -94,9 +94,12 @@ class SEAREF_Widget extends WP_Widget {
 				?>
             
                 <fieldset id="<?php echo $this->get_field_id($field_name); echo $field_key;?>" style="background-color:#eee; border-top:1px thin #999; margin-top:8px; padding:6px;" class="term-set">
-					<?php if ( isset($field_value['key']) ) : ?>
-                    <div class="term-title"><?php printf("%s%d:", __('Meta'), $field_key+1); ?> <strong><?php echo ($field_value['label']) ? $field_value['label'] : $field_value['key']; ?></strong></div>
-					<?php endif; ?>
+					
+                    <div class="term-title"><?php printf("%s%d:", __('Meta'), $field_key+1); ?>&nbsp;
+						<?php if ( isset($field_value['key']) ) : ?>
+						<strong><?php echo ($field_value['label']) ? $field_value['label'] : $field_value['key']; ?></strong>
+						<?php endif; ?>
+					</div>
                     <?php $_opt = 'key'; ?>
                     <select name="<?php echo $_f; ?>[<?php echo $_opt; ?>]" class="metakeyselect widefat">
                         <option value=""><?php _e('&mdash; Select &mdash;'); ?></option><?php
@@ -145,7 +148,7 @@ class SEAREF_Widget extends WP_Widget {
 			<h6><?php _e('デフォルトカテゴリー'); ?></h6>
 			<div>
 				<label for="<?php echo $this->get_field_id('default_cat'); ?>"><?php _e('Default term ID:', SEAREF_TEXTDOMAIN); ?></label>
-				<input class="" id="<?php echo $this->get_field_id('default_cat'); ?>" name="<?php echo $this->get_field_name('default_cat'); ?>" type="text" size="4" value="<?php echo $default_cat; ?>" />
+				<input class="" id="<?php echo $this->get_field_id('default_cat'); ?>" name="<?php echo $this->get_field_name('default_cat'); ?>" type="text" size="10" value="<?php echo $default_cat; ?>" />
 			</div>
 			<div>
 				<?php $_opt = 'is_home';
@@ -165,7 +168,14 @@ class SEAREF_Widget extends WP_Widget {
 	}
 
 	function update($new_instance, $old_instance) {
-        return $new_instance;
+		foreach ( $new_instance as $key => $value ){
+			if ( !is_array($value) ){
+				$sanitized[$key] = strip_tags( trim($value) );
+			} else {
+				$sanitized[$key] = $value;
+			}
+		}
+        return $sanitized;
 	}
 	
 	function post_is_descendant_category($cat){
