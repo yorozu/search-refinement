@@ -1,14 +1,14 @@
 <?php
 /*
 Plugin Name: Search Refinement
-Version: 0.8.9.4
+Version: 0.9.0
 Plugin URI: 
 Description: カスタムフィールドの値で投稿を絞り込むためのプラグイン
-Author: KATO Yoshitaka
+Author: Yoshitaka KATO
 Author URI: http://www.djcom.jp/
 */
 
-define('SEAREF_VERSION', '0.8.9.4');
+define('SEAREF_VERSION', '0.9.0');
 define('SEAREF_DIR_URI', plugin_dir_url(__FILE__));
 define('SEAREF_DIR_PATH', plugin_dir_path(__FILE__));
 define('SEAREF_TEXTDOMAIN', 'search-refinement');
@@ -46,7 +46,6 @@ class SearchRefinement extends Form_Tags {
 			add_action('init',			array(&$this, 'set_title_mapping'), 9);
 			add_action('parse_request', array(&$this, 'add_query_var'), 9);
 			add_action('parse_request', array(&$this, 'searef_parse_request'), 11);
-			add_action('pre_get_posts', array(&$this, 'custom_sort'), 12);
 			add_filter('posts_where',   array(&$this, 'sql_search_where'), 65535);
 			add_filter('posts_where',   array(&$this, 'sql_exclude'),	 65536);
 			add_filter('posts_join',	array(&$this, 'set_posts_join'), 65535);
@@ -173,45 +172,6 @@ class SearchRefinement extends Form_Tags {
 		return $this->action_url;
 	}
 	
-	//並び替え
-	function custom_sort($wp_query){
-		global $wp_the_query;
-		
-		if ( is_singular() ) { return; }
-		if ( $wp_the_query !== $wp_query ) { return; }
-		
-		$is_category = false;
-		$cats = $this->args['order_in_cat'];
-		$the_cat_obj = $wp_query->get_queried_object();
-		if ( $wp_query->is_category($cats) ){
-			$is_category = true;
-		} else {
-			foreach ( (array)$cats as $catid ) {
-				if ( !is_numeric($catid) && is_category($catid) ){
-					$cat_obj = get_category_by_slug($catid);
-					$catid   = $cat_obj->term_id;
-					$descendants = get_term_children( (int)$catid, 'category' );
-					if ( in_array($the_cat_obj->term_id, $descendants) ){
-						$is_category = true;
-						break;
-					}
-				}
-			}
-		}
-		
-		if ( $is_category ) {
-			if ( !empty($this->args['meta_key']) ){
-				$wp_query->set( 'meta_key', $this->args['meta_key'] );
-			}
-			if ( !empty($this->args['order']) ){
-				$wp_query->set( 'order', $this->args['order'] );
-			}
-			if ( !empty($this->args['orderby']) ){
-				$wp_query->set( 'orderby', $this->args['orderby'] );
-			}
-		}
-	}
-
 	// リストアップする記事の絞り込み
 	function sql_search_where( $where ){
 		global $wpdb, $wp_the_query, $wp_query;
@@ -404,8 +364,9 @@ class SearchRefinement extends Form_Tags {
 		if ( empty($output) ){
 			return $title;
 		} else {
-			$message = sprintf(__('Search for %s, %s items found',SEAREF_TEXTDOMAIN), '"'.join('" "', $output).'"' , $this->get_stats('found_posts'));
-			return esc_html($message) . ' | ' . $title;
+			$keyword = '"' . join('" "', $output) . '"';
+			$message = sprintf(__('Search for %s, %s items found',SEAREF_TEXTDOMAIN), $keyword, $this->get_stats('found_posts'));
+			return $message . ' | ' . $title;
 		}
 	}
 	
@@ -430,7 +391,7 @@ class SearchRefinement extends Form_Tags {
 		extract($r, EXTR_SKIP);
 
 		$posts_where = (array)$this->posts_where;
-		$where[] = " WHERE meta_key='" . $r['meta_key'] . "'"; 
+		$where = array(" WHERE meta_key='" . $r['meta_key'] . "'"); 
 		$where[] = ( is_user_logged_in() ) ? "AND (`post_status` = 'publish' OR `post_status` = 'private')" : "AND `post_status` = 'publish'";
 		$where[] = array_shift($posts_where);
 		foreach  ( $posts_where as $w_key => $w ){
@@ -439,7 +400,11 @@ class SearchRefinement extends Form_Tags {
 			}
 		}
 		
-		$inner = array(" INNER JOIN {$wpdb->postmeta} ON ({$wpdb->postmeta}.post_id = {$wpdb->posts}.ID)");
+		if ( strpos($this->posts_join, $wpdb->postmeta) === false ){
+			$inner = array(" INNER JOIN {$wpdb->postmeta} ON ({$wpdb->postmeta}.post_id = {$wpdb->posts}.ID)");
+		} else {
+			$inner = array();
+		}
 		if ( ( (is_home() && $is_home) || !is_archive() ) && $default_cat ){ 
 			$inner[] = "INNER JOIN {$wpdb->term_relationships} AS tr ON (tr.object_id = {$wpdb->posts}.ID)";
 			$inner[] = "INNER JOIN {$wpdb->term_taxonomy} AS tt ON (tt.term_taxonomy_id = tr.term_taxonomy_id)";
@@ -498,7 +463,6 @@ class SearchRefinement extends Form_Tags {
 		
 		$html = '<div class="reset-button"><form method="get" name="reset" action="' . $action . '">';
 		$html .= $this->html_inputhiddens();
-		$html .= '<input type="hidden" name="searef" value="" />';
 		$html .= '<input type="submit" value="' . __($title) . '" title="' . __($title) . '" onclick="on_submit_search(this.form);return false;" />';
 		$html .= '</form></div>';
 		
@@ -711,5 +675,4 @@ function on_submit_search(form){
 }
 global $searchrefinement;
 $searchrefinement = new SearchRefinement();
-
 ?>
